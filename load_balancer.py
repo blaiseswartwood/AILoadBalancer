@@ -3,9 +3,11 @@ import threading
 import subprocess
 import sys
 import time
+from algorithm_type import AlgorithmType
 
 LB_PORT = 1234
 SERVER_PORTS = [1235, 1236]  
+CONNECTION_COUNTS = [0, 0]
 SERVER_HOST = 'localhost' 
 server_processes = []   
 
@@ -45,12 +47,19 @@ def forward(source, destination):
         source.close()
         destination.close()
 
-def handle_client(client_socket):
+def handle_client(client_socket, algorithm_type):
     global next_server, active_connections
 
-    # Round robin server selection
-    backend_port = SERVER_PORTS[next_server]
-    next_server = (next_server + 1) % len(SERVER_PORTS) 
+    if algorithm_type == AlgorithmType.ROUND_ROBIN:
+        # Round robin server selection
+        with lock:
+            backend_port = SERVER_PORTS[next_server]
+            next_server = (next_server + 1) % len(SERVER_PORTS) 
+    elif algorithm_type == AlgorithmType.LEAST_CONNECTIONS:
+        with lock:
+            index = CONNECTION_COUNTS.index(min(CONNECTION_COUNTS))
+            backend_port = SERVER_PORTS[index]
+            CONNECTION_COUNTS[index] += 1
 
     try:
         server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -75,10 +84,23 @@ def handle_client(client_socket):
         client_socket.close()
     finally:
         with lock:
+            CONNECTION_COUNTS[index] -= 1
             active_connections -= 1
             print(f"Active connections: {active_connections}")
 
 def load_balancer():
+    if len(sys.argv) < 1 or len(sys.argv) > 2:
+        print("Usage: python load_balancer.py <algorithm_type>")
+        sys.exit()
+    
+    if len(sys.argv) == 1 or sys.argv[1] == "r":
+        algorithm_type = AlgorithmType.ROUND_ROBIN
+    elif sys.argv[1] == "c":
+        algorithm_type = AlgorithmType.LEAST_CONNECTIONS
+    else:
+        print("unknown algorithm type")
+        sys.exit()
+
     load_balancer_host = '0.0.0.0'
     start_servers()
 
@@ -95,7 +117,7 @@ def load_balancer():
             try:
                 client_socket, addr = lb_socket.accept()
                 print("Accepted connection from", addr)
-                threading.Thread(target=handle_client, args=(client_socket,)).start()
+                threading.Thread(target=handle_client, args=(client_socket, algorithm_type)).start()
             except socket.timeout:  
                 continue
     except KeyboardInterrupt:
