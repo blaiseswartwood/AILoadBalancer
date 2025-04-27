@@ -24,7 +24,7 @@ async def client_program():
         data = await client_reader.read(1024)
         data = data.decode()
         
-        print("recieved from server: ", str(data.decode()))
+        print("GPT2 Response:\n", str(data))
         message = input(" -> ")
     
     print("Closing client connection")
@@ -32,7 +32,5 @@ async def client_program():
     await client_writer.wait_closed()
 
 if __name__ == '__main__':
-    try:
-        asyncio.run(client_program())
-    except KeyboardInterrupt:
-        print("\nClient program terminated.")
+    asyncio.run(client_program())
+

@@ -24,7 +24,7 @@ def start_servers():
         print("Starting server on port:", port)
         proc = subprocess.Popen([sys.executable, './server.py', str(port)])
         server_processes.append(proc)
-        time.sleep(1)  # Give the servers time to start
+        time.sleep(5)  # Give the servers time to start
 
 def stop_servers():
     global server_processes

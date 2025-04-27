@@ -1,6 +1,6 @@
 import asyncio
 import sys
-from llm import get_llm_response
+from llm_module import get_llm_response
 
 MAX_DATA_SIZE = 1024
 SERVER_HOST = 'localhost'
@@ -21,7 +21,7 @@ async def handle_client(reader, writer, port):
                 print(f"Server on port {port} received from port {addr[1]}: {data.decode().strip()}")
             
             # Process the data (e.g., convert to uppercase)
-            data = await get_llm_response(data.decode().strip())
+            data = await get_llm_response(str(data.decode().strip()))
             data = data.encode()
             
             writer.write(data)
