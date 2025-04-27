@@ -1,24 +1,38 @@
-import socket
+import asyncio
 import sys
 
-def client_program():
+CLIENT_HOST = 'localhost'
+
+async def client_program():
     if(len(sys.argv) != 3):
         print("Usage: python client.py <server_IP> <server_port>")
         sys.exit()
 
     port = int(sys.argv[2])
-    server_address = (sys.argv[1], port)
+    server_ip = sys.argv[1]
     
-    client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    client_socket.connect(server_address) 
+    client_reader, client_writer = await asyncio.open_connection(server_ip, port)
 
     message = input(" -> ")
     while message.strip() != '.': 
-        client_socket.send(message.encode())
-        data = client_socket.recv(1025).decode()
-        print("recieved from server: ", str(data))
+        if message.strip() == '':
+            continue
+        
+        client_writer.write(message.encode())
+        await client_writer.drain()
+        
+        data = await client_reader.read(1024)
+        data = data.decode()
+        
+        print("recieved from server: ", str(data.decode()))
         message = input(" -> ")
-    client_socket.close()
+    
+    print("Closing client connection")
+    client_writer.close()
+    await client_writer.wait_closed()
 
 if __name__ == '__main__':
-    client_program()
+    try:
+        asyncio.run(client_program())
+    except KeyboardInterrupt:
+        print("\nClient program terminated.")
