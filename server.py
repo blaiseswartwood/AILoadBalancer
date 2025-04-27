@@ -1,60 +1,53 @@
-import socket
+import asyncio
 import sys
-import threading
+from llm import get_llm_response
 
-def server_thread(conn, client_num):
-    while True:
-        data = conn.recv(1024).decode()
+MAX_DATA_SIZE = 1024
+SERVER_HOST = 'localhost'
 
-        if not data:
-            break
-        else:
-            print("Data from client ", str(client_num), ": ", str(data))
-            data = str(data).upper()
-            conn.send(data.encode())
+async def handle_client(reader, writer):
+    addr = writer.get_extra_info('peername')
+    print(f"Server on port accepted connection from {addr}")
+    try: 
+        while True:
+            data = await reader.read(MAX_DATA_SIZE)
+            if not data:
+                break
+            print(f"Received from {addr}: {data.decode().strip()}")
+            
+            # Process the data (e.g., convert to uppercase)
+            data = await get_llm_response(data.decode().strip())
+            data = data.encode()
+            
+            writer.write(data)
+            await writer.drain()
+    except Exception as e:
+        print(f"Error with client {addr}: {e}")
+    finally:
+        print(f"Closing connection with {addr}")
+        writer.close()
+        await writer.wait_closed()
 
-    conn.close()
-
-def server_program():
-    host = socket.gethostname()
-    host_ip = socket.gethostbyname(host)
-
-    print("Host name: ", str(host))
-    print("Host IP: ", str(host_ip))
+async def server_program():
     
     if(len(sys.argv) != 2):
         print("Usage: python server.py <port_number>")
-        sys.exit()
+        sys.exit(1)
 
     port = int(sys.argv[1])
 
-    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    server_socket.bind(('', port))
-
-    server_socket.listen(5)
-    server_socket.settimeout(1) 
+    # starts the server, when a new client connects it calls handler
+    server = await asyncio.start_server(handle_client, SERVER_HOST, port)
+    print(f"Server on port {port} running on {SERVER_HOST}")
     
-    client_num = 1
-
     try:
-        while True:
-            try:
-                conn_socket, address = server_socket.accept() # currently blocking call
-                print("Connection ", str(client_num), " made from ", str(address))
-
-                # Start a new thread to handle the client
-                t = threading.Thread(target=server_thread, args=(conn_socket, client_num,))
-                t.start()
-                client_num += 1
-
-            except socket.timeout: # need better solution
-                continue
-
-    except KeyboardInterrupt:
-        print("\nServer shutting down gracefully.")
-    finally:
-        server_socket.close()
+        async with server:
+            await server.serve_forever()
+    except asyncio.CancelledError:
+        print(f"\nServer on port {port} shutting down.")
 
 if __name__ == '__main__':
-    server_program()
+    try:
+        asyncio.run(server_program())
+    except KeyboardInterrupt:  
+        print("\nInterrupted by user.")
