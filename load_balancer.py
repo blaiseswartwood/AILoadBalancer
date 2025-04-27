@@ -31,37 +31,45 @@ def stop_servers():
         proc.wait()  # Wait for the process to terminate
         
 def forward(source, destination):
-    """Forwards data from the source to the destination.
-
-    Keyword arguments:
-    source -- where data comes from 
-    destination -- where to send the data
-    """
     try:
         while True:
             data = source.recv(1024)
             if not data:
                 break
             destination.sendall(data)
+    except Exception as e:
+        pass
     finally:
+        try:
+            source.shutdown(socket.SHUT_RDWR)
+        except:
+            pass
+        try:
+            destination.shutdown(socket.SHUT_RDWR)
+        except:
+            pass
         source.close()
         destination.close()
 
 def handle_client(client_socket, algorithm_type):
     global next_server, active_connections
-
-    if algorithm_type == AlgorithmType.ROUND_ROBIN:
-        # Round robin server selection
-        with lock:
-            backend_port = SERVER_PORTS[next_server]
-            next_server = (next_server + 1) % len(SERVER_PORTS) 
-    elif algorithm_type == AlgorithmType.LEAST_CONNECTIONS:
-        with lock:
-            index = CONNECTION_COUNTS.index(min(CONNECTION_COUNTS))
-            backend_port = SERVER_PORTS[index]
-            CONNECTION_COUNTS[index] += 1
-
+            
+    server_socket = None
+    index = None
+    
     try:
+        
+        if algorithm_type == AlgorithmType.ROUND_ROBIN:
+        # Round robin server selection
+            with lock:
+                backend_port = SERVER_PORTS[next_server]
+                next_server = (next_server + 1) % len(SERVER_PORTS) 
+        elif algorithm_type == AlgorithmType.LEAST_CONNECTIONS:
+            with lock:
+                index = CONNECTION_COUNTS.index(min(CONNECTION_COUNTS))
+                backend_port = SERVER_PORTS[index]
+                CONNECTION_COUNTS[index] += 1
+            
         server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         server_socket.connect((SERVER_HOST, backend_port))
@@ -84,7 +92,8 @@ def handle_client(client_socket, algorithm_type):
         client_socket.close()
     finally:
         with lock:
-            CONNECTION_COUNTS[index] -= 1
+            if index is not None:
+                CONNECTION_COUNTS[index] -= 1
             active_connections -= 1
             print(f"Active connections: {active_connections}")
 
@@ -110,6 +119,8 @@ def load_balancer():
     lb_socket.listen(5)
     lb_socket.settimeout(1)
 
+    client_sockets = []
+
     print(f"Load Balancer running on port {LB_PORT}")
 
     try:
@@ -117,12 +128,20 @@ def load_balancer():
             try:
                 client_socket, addr = lb_socket.accept()
                 print("Accepted connection from", addr)
+                client_sockets.append(client_socket)
                 threading.Thread(target=handle_client, args=(client_socket, algorithm_type)).start()
-            except socket.timeout:  
+            except socket.timeout:
                 continue
     except KeyboardInterrupt:
         print("\nLoad balancer shutting down.")
     finally:
+        # Gracefully close all client sockets
+        for cs in client_sockets:
+            try:
+                cs.shutdown(socket.SHUT_RDWR)
+            except:
+                pass
+            cs.close()
         stop_servers()
         lb_socket.close()
 
