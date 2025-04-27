@@ -1,5 +1,6 @@
 # AILoadBalancer
 Creating a load balancer specifically geared towards for LLM usage
+For simulation purposes
 
 Make a virtual environment
 
