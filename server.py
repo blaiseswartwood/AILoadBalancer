@@ -4,16 +4,21 @@ from llm import get_llm_response
 
 MAX_DATA_SIZE = 1024
 SERVER_HOST = 'localhost'
+SERVER_LOGS = False
 
-async def handle_client(reader, writer):
+async def handle_client(reader, writer, port):
     addr = writer.get_extra_info('peername')
-    print(f"Server on port accepted connection from {addr}")
+    
+    if SERVER_LOGS:
+        print(f"Server on port {port} accepted connection on port {addr[1]}")
     try: 
         while True:
             data = await reader.read(MAX_DATA_SIZE)
             if not data:
                 break
-            print(f"Received from {addr}: {data.decode().strip()}")
+            
+            if SERVER_LOGS:
+                print(f"Server on port {port} received from port {addr[1]}: {data.decode().strip()}")
             
             # Process the data (e.g., convert to uppercase)
             data = await get_llm_response(data.decode().strip())
@@ -22,9 +27,11 @@ async def handle_client(reader, writer):
             writer.write(data)
             await writer.drain()
     except Exception as e:
-        print(f"Error with client {addr}: {e}")
+        if SERVER_LOGS:
+            print(f"Error with client {addr}: {e}")
     finally:
-        print(f"Closing connection with {addr}")
+        if SERVER_LOGS:
+            print(f"Server on port {port} closed connection with {addr[1]}")
         writer.close()
         await writer.wait_closed()
 
@@ -37,17 +44,24 @@ async def server_program():
     port = int(sys.argv[1])
 
     # starts the server, when a new client connects it calls handler
-    server = await asyncio.start_server(handle_client, SERVER_HOST, port)
-    print(f"Server on port {port} running on {SERVER_HOST}")
+    server = await asyncio.start_server(
+        lambda r, w: handle_client(r, w, port), 
+        SERVER_HOST, 
+        port)
+    
+    if SERVER_LOGS:
+        print(f"Server on port {port} running on {SERVER_HOST}")
     
     try:
         async with server:
             await server.serve_forever()
     except asyncio.CancelledError:
-        print(f"\nServer on port {port} shutting down.")
+        if SERVER_LOGS:
+            print(f"Server on port {port} shutting down.")
 
 if __name__ == '__main__':
     try:
         asyncio.run(server_program())
     except KeyboardInterrupt:  
-        print("\nInterrupted by user.")
+        if SERVER_LOGS:
+            print("\nInterrupted by user.")

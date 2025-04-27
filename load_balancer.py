@@ -1,24 +1,27 @@
-import socket
-import threading
 import subprocess
 import sys
 import time
+import asyncio
 from algorithm_type import AlgorithmType
 
+LOAD_BALANCER_HOST = 'localhost' 
 LB_PORT = 1234
+
+SERVER_HOST = 'localhost'
 SERVER_PORTS = [1235, 1236]  
-CONNECTION_COUNTS = [0, 0]
-SERVER_HOST = 'localhost' 
 server_processes = []   
 
+# managing servers
 next_server = 0
 active_connections = 0
-lock = threading.Lock()
+CONNECTION_COUNTS = [0, 0]
+lock = asyncio.Lock()
 
 def start_servers():
     global server_processes
     
     for port in SERVER_PORTS:
+        print("Starting server on port:", port)
         proc = subprocess.Popen([sys.executable, './server.py', str(port)])
         server_processes.append(proc)
         time.sleep(1)  # Give the servers time to start
@@ -30,74 +33,68 @@ def stop_servers():
         proc.terminate()
         proc.wait()  # Wait for the process to terminate
         
-def forward(source, destination):
+async def forward(reader, writer):
     try:
         while True:
-            data = source.recv(1024)
+            data = await reader.read(1024)
             if not data:
                 break
-            destination.sendall(data)
+            writer.write(data)
+            await writer.drain()
     except Exception as e:
         pass
     finally:
-        try:
-            source.shutdown(socket.SHUT_RDWR)
-        except:
-            pass
-        try:
-            destination.shutdown(socket.SHUT_RDWR)
-        except:
-            pass
-        source.close()
-        destination.close()
+        writer.close()
+        await writer.wait_closed()
 
-def handle_client(client_socket, algorithm_type):
+async def handle_client(client_reader, client_writer, algorithm_type):
+    addr = client_writer.get_extra_info('peername')
+    print(f"Load balancer received connection on port {addr[1]}")
     global next_server, active_connections
             
-    server_socket = None
+    server_writer = None
+    server_reader = None
     index = None
     
     try:
-        
-        if algorithm_type == AlgorithmType.ROUND_ROBIN:
-        # Round robin server selection
-            with lock:
+        async with lock:
+            if algorithm_type == AlgorithmType.ROUND_ROBIN:
                 backend_port = SERVER_PORTS[next_server]
+                index = next_server
                 next_server = (next_server + 1) % len(SERVER_PORTS) 
-        elif algorithm_type == AlgorithmType.LEAST_CONNECTIONS:
-            with lock:
+            elif algorithm_type == AlgorithmType.LEAST_CONNECTIONS: 
                 index = CONNECTION_COUNTS.index(min(CONNECTION_COUNTS))
                 backend_port = SERVER_PORTS[index]
-                CONNECTION_COUNTS[index] += 1
+            CONNECTION_COUNTS[index] += 1
             
-        server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        server_socket.connect((SERVER_HOST, backend_port))
-        print(f"Connected client to backend server on port {backend_port}")
+        server_reader, server_writer = await asyncio.open_connection(SERVER_HOST, backend_port)
+        print(f"Load balancer connected to backend server on port {backend_port}")
 
-        with lock:
+        async with lock:
             active_connections += 1
-            print(f"Active connections: {active_connections}")
+            print(f"Total active connections: {active_connections}")
             
-        # Start threads to forward data between client and server
-        t1 = threading.Thread(target=forward, args=(client_socket, server_socket))
-        t2 = threading.Thread(target=forward, args=(server_socket, client_socket))
-        t1.start()
-        t2.start()
-
-        t1.join()
-        t2.join()
+        # Forward data in both directions
+        await asyncio.gather(
+            forward(client_reader, server_writer),
+            forward(server_reader, client_writer)
+        )
     except Exception as e:
         print("Error connecting to backend server:", e)
-        client_socket.close()
     finally:
-        with lock:
+        async with lock:
             if index is not None:
                 CONNECTION_COUNTS[index] -= 1
             active_connections -= 1
-            print(f"Active connections: {active_connections}")
+            print(f"Load balancer closed connection with client on port {addr[1]}")
+            print(f"Server on port {backend_port} has {CONNECTION_COUNTS[index]} connections")
+            print(f"Total active connections: {active_connections}")
+        client_writer.close()
+        if server_writer:
+            server_writer.close()
+            await server_writer.wait_closed()
 
-def load_balancer():
+async def load_balancer():
     if len(sys.argv) < 1 or len(sys.argv) > 2:
         print("Usage: python load_balancer.py <algorithm_type>")
         sys.exit()
@@ -110,40 +107,152 @@ def load_balancer():
         print("unknown algorithm type")
         sys.exit()
 
-    load_balancer_host = '0.0.0.0'
     start_servers()
 
-    lb_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    lb_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    lb_socket.bind((load_balancer_host, LB_PORT))
-    lb_socket.listen(5)
-    lb_socket.settimeout(1)
+    load_balancer = await asyncio.start_server(
+        lambda r, w: handle_client(r, w, algorithm_type),
+        LOAD_BALANCER_HOST,
+        LB_PORT
+    )
 
     client_sockets = []
 
-    print(f"Load Balancer running on port {LB_PORT}")
+    print(f"Load Balancer on port {LB_PORT} running on {LOAD_BALANCER_HOST}")
 
     try:
-        while True:
-            try:
-                client_socket, addr = lb_socket.accept()
-                print("Accepted connection from", addr)
-                client_sockets.append(client_socket)
-                threading.Thread(target=handle_client, args=(client_socket, algorithm_type)).start()
-            except socket.timeout:
-                continue
-    except KeyboardInterrupt:
+        async with load_balancer:
+            await load_balancer.serve_forever()
+    except asyncio.CancelledError:
         print("\nLoad balancer shutting down.")
-    finally:
-        # Gracefully close all client sockets
-        for cs in client_sockets:
-            try:
-                cs.shutdown(socket.SHUT_RDWR)
-            except:
-                pass
-            cs.close()
-        stop_servers()
-        lb_socket.close()
 
 if __name__ == '__main__':
-    load_balancer()
+    try:
+        asyncio.run(load_balancer())
+    except KeyboardInterrupt:
+        print("\nInterrupted by user.")
+
+# import asyncio
+# import subprocess
+# import sys
+# import time
+# from algorithm_type import AlgorithmType
+
+# LB_PORT = 1234
+# SERVER_PORTS = [1235, 1236]
+# CONNECTION_COUNTS = [0, 0]
+# SERVER_HOST = 'localhost'
+# server_processes = []
+
+# next_server = 0
+# active_connections = 0
+# lock = asyncio.Lock()
+
+# def start_servers():
+#     global server_processes
+#     for port in SERVER_PORTS:
+#         proc = subprocess.Popen([sys.executable, './server.py', str(port)])
+#         server_processes.append(proc)
+#         time.sleep(1)  # Give servers time to start
+
+# def stop_servers():
+#     global server_processes
+#     for proc in server_processes:
+#         proc.terminate()
+#         proc.wait()
+
+# async def forward(reader, writer):
+#     try:
+#         while True:
+#             data = await reader.read(1024)
+#             if not data:
+#                 break
+#             writer.write(data)
+#             await writer.drain()
+#     except Exception:
+#         pass
+#     finally:
+#         writer.close()
+#         await writer.wait_closed()
+
+# async def handle_client(client_reader, client_writer, algorithm_type):
+#     global next_server, active_connections
+#     server_writer = None
+#     server_reader = None
+#     index = None
+
+#     try:
+#         async with lock:
+#             if algorithm_type == AlgorithmType.ROUND_ROBIN:
+#                 backend_port = SERVER_PORTS[next_server]
+#                 next_server = (next_server + 1) % len(SERVER_PORTS)
+#             elif algorithm_type == AlgorithmType.LEAST_CONNECTIONS:
+#                 index = CONNECTION_COUNTS.index(min(CONNECTION_COUNTS))
+#                 backend_port = SERVER_PORTS[index]
+#                 CONNECTION_COUNTS[index] += 1
+
+#         server_reader, server_writer = await asyncio.open_connection(SERVER_HOST, backend_port)
+#         print(f"Connected client to backend server on port {backend_port}")
+
+#         async with lock:
+#             active_connections += 1
+#             print(f"Active connections: {active_connections}")
+
+#         # Forward data in both directions
+#         await asyncio.gather(
+#             forward(client_reader, server_writer),
+#             forward(server_reader, client_writer)
+#         )
+
+#     except Exception as e:
+#         print("Error connecting to backend server:", e)
+#     finally:
+#         async with lock:
+#             if index is not None:
+#                 CONNECTION_COUNTS[index] -= 1
+#             active_connections -= 1
+#             print(f"Active connections: {active_connections}")
+#         client_writer.close()
+#         if server_writer:
+#             server_writer.close()
+#             await server_writer.wait_closed()
+
+# async def load_balancer():
+#     if len(sys.argv) < 1 or len(sys.argv) > 2:
+#         print("Usage: python load_balancer.py <algorithm_type>")
+#         sys.exit()
+
+#     if len(sys.argv) == 1 or sys.argv[1] == "r":
+#         algorithm_type = AlgorithmType.ROUND_ROBIN
+#     elif sys.argv[1] == "c":
+#         algorithm_type = AlgorithmType.LEAST_CONNECTIONS
+#     else:
+#         print("unknown algorithm type")
+#         sys.exit()
+
+#     start_servers()
+
+#     server = await asyncio.start_server(
+#         lambda r, w: handle_client(r, w, algorithm_type),
+#         '0.0.0.0',
+#         LB_PORT
+#     )
+
+#     addrs = ', '.join(str(sock.getsockname()) for sock in server.sockets)
+#     print(f"Load Balancer running on {addrs}")
+
+#     try:
+#         async with server:
+#             await server.serve_forever()
+#     except asyncio.CancelledError:
+#         print("\nLoad balancer shutting down.")
+#     finally:
+#         stop_servers()
+
+# def main():
+#     try:
+#         asyncio.run(load_balancer())
+#     except KeyboardInterrupt:
+#         print("\nInterrupted by user.")
+
+# if __name__ == '__main__':
+#     main()
