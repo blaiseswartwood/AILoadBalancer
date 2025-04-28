@@ -3,7 +3,7 @@ from huggingface_hub import login
 from transformers import pipeline
 import torch
 
-MAX_RESPONSE = 50
+MAX_RESPONSE = 20
 
 print("Logging into HuggingFace Hub...")
 #login(token='your_token') # Replace 'your_token' with your actual token

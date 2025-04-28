@@ -6,7 +6,7 @@ from algorithm_type import AlgorithmType
 from semantic_cache import SemanticCache
 import uuid
 
-CACHING_LOGS = False
+CACHING_LOGS = True
 LOAD_BALANCER_HOST = 'localhost' 
 LB_PORT = 1234
 
@@ -50,8 +50,7 @@ async def cli_to_srv_forward(client_reader, server_writer, client_writer):
             data = data.decode()
             
             # caching - need to ensure its only one way caching
-            cache_key = semantic_cache.semantic_key(str(data))
-            cache_response = semantic_cache.get(cache_key)
+            cache_response = semantic_cache.get(str(data))
             
             if cache_response is not None:
                 print("Cache hit!")
@@ -64,7 +63,7 @@ async def cli_to_srv_forward(client_reader, server_writer, client_writer):
                 print("Cache miss!")
                 # adding id to pending requests to ensure we will cache the response when it comes
                 request_id = str(uuid.uuid4())
-                pending_requests[request_id] = cache_key
+                pending_requests[request_id] = str(data)
                 # appending unique ID to the data sent.
                 payload = f"{request_id}|{data}"
                 if CACHING_LOGS:
@@ -72,7 +71,7 @@ async def cli_to_srv_forward(client_reader, server_writer, client_writer):
                 server_writer.write(payload.encode())
                 await server_writer.drain()
     except Exception as e:
-        pass
+        print(f"Exception occurred: {e}")
     finally:
         server_writer.close()
         await server_writer.wait_closed()
@@ -89,15 +88,15 @@ async def srv_to_cli_forward(server_reader, client_writer):
             data = data.decode()
             
             request_id, response_payload = data.split('|', 1)
-            cache_key = pending_requests.pop(request_id, None)
-            if cache_key:
+            request_msg = pending_requests.pop(request_id, None)
+            if request_msg:
                 if CACHING_LOGS:
                     print("Adding to cache: ", response_payload)
-                semantic_cache.add(cache_key, response_payload)
+                semantic_cache.add(request_msg, response_payload)
             client_writer.write(response_payload.encode())
             await client_writer.drain()
     except Exception as e:
-        pass
+        print(f"Exception occurred: {e}")
     finally:
         client_writer.close()
         await client_writer.wait_closed()
