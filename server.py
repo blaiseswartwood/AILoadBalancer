@@ -6,6 +6,27 @@ MAX_DATA_SIZE = 1024
 SERVER_HOST = 'localhost'
 SERVER_LOGS = True
 
+LB_HOST = 'localhost'
+LB_PORT = 1234
+
+async def connect_to_load_balancer(host, port):
+    """Connects to the load balancer and returns the reader and writer objects.
+    
+    Args:
+        host: The host address of the load balancer.
+        port: The port number of the load balancer.
+        
+    Returns:
+        reader: StreamReader object for reading data from the load balancer.
+        writer: StreamWriter object for writing data to the load balancer.
+    """
+    try:
+        reader, writer = await asyncio.open_connection(host, port)
+        return reader, writer
+    except Exception as e:
+        print(f"Error connecting to load balancer: {e}")
+        sys.exit(1)
+        
 async def handle_client(reader, writer, port):
     """Handles incoming client connections and processes requests using the LLM.
     
@@ -66,6 +87,8 @@ async def server_program():
         sys.exit(1)
 
     port = int(sys.argv[1])
+    
+    load_balancer_reader, load_balancer_writer = await connect_to_load_balancer(LB_HOST, LB_PORT)
 
     server = await asyncio.start_server(
         lambda r, w: handle_client(r, w, port), 
