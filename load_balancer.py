@@ -22,12 +22,13 @@ lock = asyncio.Lock()
 
 # caching
 semantic_cache = SemanticCache()
-# caching protocol to ensure enable correct caching
 pending_requests = {}
 
 def start_servers():
+    """
+    Starts the servers on the specified ports
+    """
     global server_processes
-    
     for port in SERVER_PORTS:
         print("Starting server on port:", port)
         proc = subprocess.Popen([sys.executable, './server.py', str(port)])
@@ -35,13 +36,23 @@ def start_servers():
         time.sleep(5)  # Give the servers time to start
 
 def stop_servers():
+    """
+    Stops the servers on the specified ports
+    """
     global server_processes
-    
     for proc in server_processes:
         proc.terminate()
         proc.wait()  # Wait for the process to terminate
         
 async def cli_to_srv_forward(client_reader, server_writer, client_writer):
+    """
+    Forwards data from the client to the server.
+
+    Args:
+        client_reader: StreamReader object that reads data from the client.
+        server_writer: StreamWriter object that writes data to the server
+        client_writer: StreamWriter object that writes data to the client.
+    """
     try:
         while True:
             data = await client_reader.read(1024)
@@ -53,21 +64,26 @@ async def cli_to_srv_forward(client_reader, server_writer, client_writer):
             cache_response = semantic_cache.get(str(data))
             
             if cache_response is not None:
-                print("Cache hit!")
                 cache_response = cache_response.encode()
+                
                 if CACHING_LOGS:
+                    print("Cache hit!")
                     print("Got cache_response of: ", cache_response)
+                    
                 client_writer.write(cache_response)
                 await client_writer.drain()
             else:
-                print("Cache miss!")
                 # adding id to pending requests to ensure we will cache the response when it comes
                 request_id = str(uuid.uuid4())
                 pending_requests[request_id] = str(data)
+                
                 # appending unique ID to the data sent.
                 payload = f"{request_id}|{data}"
+                
                 if CACHING_LOGS:
+                    print("Cache miss!")
                     print("Sending off payload: ", payload)
+                    
                 server_writer.write(payload.encode())
                 await server_writer.drain()
     except Exception as e:
@@ -77,11 +93,16 @@ async def cli_to_srv_forward(client_reader, server_writer, client_writer):
         await server_writer.wait_closed()
         
 async def srv_to_cli_forward(server_reader, client_writer):
-    '''
-    Forwards data from server back to the client.
-    '''
+    """
+    Forwards data from the server back to the client.
+
+    Args:
+        server_reader: StreamReader object that reads data from the server.
+        client_writer: StreamWriter object that writes data to the client.
+    """
     try:
         while True:
+            # Read data from the server
             data = await server_reader.read(1024)
             if not data:
                 break
@@ -89,10 +110,14 @@ async def srv_to_cli_forward(server_reader, client_writer):
             
             request_id, response_payload = data.split('|', 1)
             request_msg = pending_requests.pop(request_id, None)
+            
+            # Cache the response
             if request_msg:
                 if CACHING_LOGS:
                     print("Adding to cache: ", response_payload)
                 semantic_cache.add(request_msg, response_payload)
+                
+            # Write the response back to the client
             client_writer.write(response_payload.encode())
             await client_writer.drain()
     except Exception as e:
@@ -101,7 +126,16 @@ async def srv_to_cli_forward(server_reader, client_writer):
         client_writer.close()
         await client_writer.wait_closed()
 
+
 async def handle_client(client_reader, client_writer, algorithm_type):
+    """
+    Handles a client connection by forwarding data to the appropriate backend server.
+
+    Args:
+        client_reader: StreamReader object that reads data from the client.
+        client_writer: StreamWriter object that writes data to the client.
+        algorithm_type: The load balancing algorithm to use.
+    """
     addr = client_writer.get_extra_info('peername')
     print(f"Load balancer received connection on port {addr[1]}")
     global next_server, active_connections
@@ -149,6 +183,12 @@ async def handle_client(client_reader, client_writer, algorithm_type):
             await server_writer.wait_closed()
 
 async def load_balancer():
+    """
+    Creates the load balancer server and starts listening for client connections.
+    
+    Args:
+        From command line: algorithm_type (r for round robin, c for least connections).
+    """
     if len(sys.argv) < 1 or len(sys.argv) > 2:
         print("Usage: python load_balancer.py <algorithm_type>")
         sys.exit()
@@ -161,8 +201,10 @@ async def load_balancer():
         print("unknown algorithm type")
         sys.exit()
 
+    # start server processes
     start_servers()
 
+    # start the load balancer
     load_balancer = await asyncio.start_server(
         lambda r, w: handle_client(r, w, algorithm_type),
         LOAD_BALANCER_HOST,

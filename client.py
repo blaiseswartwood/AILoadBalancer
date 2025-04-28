@@ -4,6 +4,11 @@ import sys
 CLIENT_HOST = 'localhost'
 
 async def client_program():
+    """Client program that connects to the server and sends messages.
+    
+    The client reads messages from the user and sends them to the server.
+    The keyword '.' is used to terminate the connection.
+    """
     if(len(sys.argv) != 3):
         print("Usage: python client.py <server_IP> <server_port>")
         sys.exit()

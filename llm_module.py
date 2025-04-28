@@ -22,7 +22,12 @@ generator = pipeline(
 print("Model loaded successfully.")
 print("Clients may now connect to the server.")
 
-async def get_llm_response(prompt: str) -> str:
+def get_llm_response(prompt: str) -> str:
+    """Returns the response from the LLM model for the given prompt.
+
+    Args:
+        prompt (str): The input prompt for the LLM model.
+    """
     print("Generating response...")
     response = generator(
         prompt,

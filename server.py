@@ -7,10 +7,19 @@ SERVER_HOST = 'localhost'
 SERVER_LOGS = True
 
 async def handle_client(reader, writer, port):
-    addr = writer.get_extra_info('peername')
+    """Handles incoming client connections and processes requests using the LLM.
     
+    Args:
+        reader: StreamReader object that reads data from the client.
+        writer: StreamWriter object that writes data to the client.
+        port: The port number on which the server is running.
+        
+    Expected message format: <uid>|<payload>
+    """
+    addr = writer.get_extra_info('peername')
     if SERVER_LOGS:
         print(f"Server on port {port} accepted connection on port {addr[1]}")
+        
     try: 
         while True:
             data = await reader.read(MAX_DATA_SIZE)
@@ -22,20 +31,16 @@ async def handle_client(reader, writer, port):
             
             if SERVER_LOGS:
                 print(f"Server on port {port} received from port {addr[1]}: {data}")
-            
-            if SERVER_LOGS:
                 print(f"LLM receiving: {request_payload}")
             
             # Process the data (e.g., convert to uppercase)
-            response_payload = await get_llm_response(str(request_payload))
-            
-            if SERVER_LOGS:
-                print(f"LLM Response: {response_payload}")
+            response_payload = get_llm_response(str(request_payload))
             
             # adding the request ID
             data = f"{request_id}|{response_payload}"
             
             if SERVER_LOGS:
+                print(f"LLM Response: {response_payload}")
                 print(f"Server on port {port} sending back data to port {addr[1]}: {data}")
 
             writer.write(data.encode())
@@ -50,14 +55,18 @@ async def handle_client(reader, writer, port):
         await writer.wait_closed()
 
 async def server_program():
+    """
+    Creates the server and starts listening for incoming connections.
     
+    Args:
+        From command line: port number to connect to.
+    """
     if(len(sys.argv) != 2):
         print("Usage: python server.py <port_number>")
         sys.exit(1)
 
     port = int(sys.argv[1])
 
-    # starts the server, when a new client connects it calls handler
     server = await asyncio.start_server(
         lambda r, w: handle_client(r, w, port), 
         SERVER_HOST, 
