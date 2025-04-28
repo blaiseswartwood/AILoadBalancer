@@ -4,7 +4,7 @@ from llm_module import get_llm_response
 
 MAX_DATA_SIZE = 1024
 SERVER_HOST = 'localhost'
-SERVER_LOGS = False
+SERVER_LOGS = True
 
 async def handle_client(reader, writer, port):
     addr = writer.get_extra_info('peername')

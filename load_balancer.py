@@ -3,6 +3,7 @@ import sys
 import time
 import asyncio
 from algorithm_type import AlgorithmType
+from semantic_cache import SemanticCache
 
 LOAD_BALANCER_HOST = 'localhost' 
 LB_PORT = 1234
@@ -16,6 +17,9 @@ next_server = 0
 active_connections = 0
 CONNECTION_COUNTS = [0, 0]
 lock = asyncio.Lock()
+
+# caching
+semantic_cache = SemanticCache()
 
 def start_servers():
     global server_processes
@@ -39,8 +43,23 @@ async def forward(reader, writer):
             data = await reader.read(1024)
             if not data:
                 break
-            writer.write(data)
-            await writer.drain()
+            data = data.decode()
+            
+            # caching - need to ensure its only one way caching
+            cache_key = semantic_cache.semantic_key(str(data))
+            cache_response = semantic_cache.get(cache_key)
+            
+            if cache_response is not None:
+                print("Cache hit!")
+                cache_response = cache_response.encode()
+                reader.write(cache_response)
+                await reader.drain()
+            else:
+                print("Cache miss!")
+                semantic_cache.add(cache_key, data)
+                writer.write(data.encode())
+                await writer.drain()
+                
     except Exception as e:
         pass
     finally:
@@ -114,8 +133,6 @@ async def load_balancer():
         LOAD_BALANCER_HOST,
         LB_PORT
     )
-
-    client_sockets = []
 
     print(f"Load Balancer on port {LB_PORT} running on {LOAD_BALANCER_HOST}")
 
