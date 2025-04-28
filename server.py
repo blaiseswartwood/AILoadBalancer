@@ -23,8 +23,14 @@ async def handle_client(reader, writer, port):
             if SERVER_LOGS:
                 print(f"Server on port {port} received from port {addr[1]}: {data}")
             
+            if SERVER_LOGS:
+                print(f"LLM receiving: {request_payload}")
+            
             # Process the data (e.g., convert to uppercase)
             response_payload = await get_llm_response(str(request_payload))
+            
+            if SERVER_LOGS:
+                print(f"LLM Response: {response_payload}")
             
             # adding the request ID
             data = f"{request_id}|{response_payload}"
