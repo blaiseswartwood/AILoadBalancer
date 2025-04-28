@@ -1,14 +1,17 @@
 from transformers import pipeline
 import numpy as np
+from collections import deque
 
 class SemanticCache:
     """Cache for storing semantic embeddings and their corresponding values.
 
-    The cache is formatted as a list of tuples, where each tuple contains an embedding and its corresponding value.
+    The cache is formatted as a dictionary of embedding, value.
     The cache uses cosine similarity to determine if a new message is similar to any existing messages in the cache.
     """
     def __init__(self, similarity_threshold=0.95, CACHE_LOGS=True):
-        self.cache = [] # (list of tuples (embedding, value))
+        self.cache = {} # dict of (embedding, value)
+        self.ordering = deque()
+        self.max_cache_size = 2
         self.semantic_pipeline = pipeline("feature-extraction", model="distilbert-base-uncased")
         self.similarity_threshold = similarity_threshold
         self.CACHE_LOGS = CACHE_LOGS
@@ -21,13 +24,17 @@ class SemanticCache:
         """
         query_embedding = self.semantic_key(msg)
 
-        for cached_embedding, value in self.cache:
+        for cached_key, value in self.cache.items():
+            cached_embedding = np.array(cached_key)
             similarity = self.cosine_similarity(query_embedding, cached_embedding)
             if similarity >= self.similarity_threshold:
             
                 if self.CACHE_LOGS:
                     print("Got a cache hit! Simliarity: ", similarity)
                     
+                # make it the most recent entry in the cache
+                self.ordering.remove(cached_key)
+                self.ordering.append(cached_key)
                 return str(value)
             
         if self.CACHE_LOGS:
@@ -36,11 +43,19 @@ class SemanticCache:
         return None
     
     def add(self, msg, value):
+        if len(self.cache) >= self.max_cache_size:
+            oldest_entry = self.ordering.popleft()
+            del self.cache[oldest_entry]            
+            if self.CACHE_LOGS:
+                print("Max cache size reached! Removing oldest entry.")
         emb_vec = self.semantic_key(msg)
-        self.cache.append((emb_vec, value))
+        emb_key = tuple(emb_vec)
+        self.cache[emb_key] = value
+        self.ordering.append(emb_key)
     
     def clear(self):
         self.cache.clear()
+        self.ordering.clear()
         
     def semantic_key(self, data):
         # (1, num_tokens, 768)
