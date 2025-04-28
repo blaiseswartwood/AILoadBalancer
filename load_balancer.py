@@ -4,7 +4,9 @@ import time
 import asyncio
 from algorithm_type import AlgorithmType
 from semantic_cache import SemanticCache
+import uuid
 
+CACHING_LOGS = False
 LOAD_BALANCER_HOST = 'localhost' 
 LB_PORT = 1234
 
@@ -20,6 +22,8 @@ lock = asyncio.Lock()
 
 # caching
 semantic_cache = SemanticCache()
+# caching protocol to ensure enable correct caching
+pending_requests = {}
 
 def start_servers():
     global server_processes
@@ -37,10 +41,10 @@ def stop_servers():
         proc.terminate()
         proc.wait()  # Wait for the process to terminate
         
-async def forward(reader, writer):
+async def cli_to_srv_forward(client_reader, server_writer, client_writer):
     try:
         while True:
-            data = await reader.read(1024)
+            data = await client_reader.read(1024)
             if not data:
                 break
             data = data.decode()
@@ -52,19 +56,51 @@ async def forward(reader, writer):
             if cache_response is not None:
                 print("Cache hit!")
                 cache_response = cache_response.encode()
-                reader.write(cache_response)
-                await reader.drain()
+                if CACHING_LOGS:
+                    print("Got cache_response of: ", cache_response)
+                client_writer.write(cache_response)
+                await client_writer.drain()
             else:
                 print("Cache miss!")
-                semantic_cache.add(cache_key, data)
-                writer.write(data.encode())
-                await writer.drain()
-                
+                # adding id to pending requests to ensure we will cache the response when it comes
+                request_id = str(uuid.uuid4())
+                pending_requests[request_id] = cache_key
+                # appending unique ID to the data sent.
+                payload = f"{request_id}|{data}"
+                if CACHING_LOGS:
+                    print("Sending off payload: ", payload)
+                server_writer.write(payload.encode())
+                await server_writer.drain()
     except Exception as e:
         pass
     finally:
-        writer.close()
-        await writer.wait_closed()
+        server_writer.close()
+        await server_writer.wait_closed()
+        
+async def srv_to_cli_forward(server_reader, client_writer):
+    '''
+    Forwards data from server back to the client.
+    '''
+    try:
+        while True:
+            data = await server_reader.read(1024)
+            if not data:
+                break
+            data = data.decode()
+            
+            request_id, response_payload = data.split('|', 1)
+            cache_key = pending_requests.pop(request_id, None)
+            if cache_key:
+                if CACHING_LOGS:
+                    print("Adding to cache: ", response_payload)
+                semantic_cache.add(cache_key, response_payload)
+            client_writer.write(response_payload.encode())
+            await client_writer.drain()
+    except Exception as e:
+        pass
+    finally:
+        client_writer.close()
+        await client_writer.wait_closed()
 
 async def handle_client(client_reader, client_writer, algorithm_type):
     addr = client_writer.get_extra_info('peername')
@@ -95,8 +131,8 @@ async def handle_client(client_reader, client_writer, algorithm_type):
             
         # Forward data in both directions
         await asyncio.gather(
-            forward(client_reader, server_writer),
-            forward(server_reader, client_writer)
+            cli_to_srv_forward(client_reader, server_writer, client_writer),
+            srv_to_cli_forward(server_reader, client_writer)
         )
     except Exception as e:
         print("Error connecting to backend server:", e)

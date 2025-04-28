@@ -5,6 +5,7 @@ import hashlib
 class SemanticCache:
     def __init__(self):
         self.cache = {}
+        print("Initializing semantic cache...")
         self.semantic_pipeline = pipeline("feature-extraction", model="distilbert-base-uncased")
         print("Semantic cache ready.")
     

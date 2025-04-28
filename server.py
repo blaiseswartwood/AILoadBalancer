@@ -17,14 +17,22 @@ async def handle_client(reader, writer, port):
             if not data:
                 break
             
+            data = data.decode().strip()
+            request_id, request_payload = data.split('|', 1)
+            
             if SERVER_LOGS:
-                print(f"Server on port {port} received from port {addr[1]}: {data.decode().strip()}")
+                print(f"Server on port {port} received from port {addr[1]}: {data}")
             
             # Process the data (e.g., convert to uppercase)
-            data = await get_llm_response(str(data.decode().strip()))
-            data = data.encode()
+            response_payload = await get_llm_response(str(request_payload))
             
-            writer.write(data)
+            # adding the request ID
+            data = f"{request_id}|{response_payload}"
+            
+            if SERVER_LOGS:
+                print(f"Server on port {port} sending back data to port {addr[1]}: {data}")
+
+            writer.write(data.encode())
             await writer.drain()
     except Exception as e:
         if SERVER_LOGS:
