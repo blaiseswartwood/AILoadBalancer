@@ -2,10 +2,13 @@ import subprocess
 import sys
 import time
 import asyncio
-from algorithm_type import AlgorithmType
+from algorithm_type import LBAlgorithm, AlgorithmType, RoundRobin, LeastConnections, BackendServer
 from semantic_cache import SemanticCache
 import uuid
+from collections import deque
 
+
+        
 class LoadBalancer:
     """
     LoadBalancer class that manages the backend servers and distributes requests to them.
@@ -14,32 +17,27 @@ class LoadBalancer:
         self.LB_HOST = 'localhost' 
         self.LB_PORT = 1234
 
-        self.SERVER_HOST = []
-        self.SERVER_PORTS = []
-        self.server_processes = [] 
-        
-        self.CACHING_LOGS = True
-        self.MAX_DATA_SIZE = 1024
-        # managing servers
-        self.next_server = 0
-        self.active_connections = 0
-        self.connection_counts = []
+        # Load balancing algorithm
+        self.LB_algorithm = self.load_lb_algorithm()
         self.lock = asyncio.Lock()
+
+        self.MAX_DATA_SIZE = 1024
+        
+        # managing servers
+        self.active_connections = 0
 
         # caching
         self.semantic_cache = SemanticCache()
         self.pending_requests = {}
+        self.CACHING_LOGS = True
         
+        self.server_processes = [] 
+
     def start_servers(self):
         """
         Starts the servers on the specified ports
         """
         # ports = [1235, 1236]  
-
-        # self.ports = [1235, 1236]  
-        # self.SERVER_HOST = ['localhost', 'localhost']
-        # self.connection_counts = [0, 0]
-        #for port in self.SERVER_PORTS:
         ports = []
         for port in ports:
             print("Starting server on port:", port)
@@ -55,33 +53,23 @@ class LoadBalancer:
             proc.terminate()
             proc.wait()  # Wait for the process to terminate
             
-    def add_server(self, host, port):
+    def load_lb_algorithm(self):
         """
-        Adds a new server to the load balancer.
-
-        Args:
-            port: The port number on which the new server will run.
+        Loads the load balancing algorithm based on the command line argument.
         """
-        self.SERVER_HOST.append(host)
-        self.SERVER_PORTS.append(port)
-        self.connection_counts.append(0)
-        print(f"Added server on port {port}")
+        if len(sys.argv) < 1 or len(sys.argv) > 2:
+            print("Usage: python load_balancer.py <algorithm_type>")
+            sys.exit()
         
-    def remove_server(self, index, host, port):
-        """
-        Removes a server from the load balancer.
-
-        Args:
-            index: The index of the server to be removed.
-            host: The host of the server to be removed.
-            port: The port of the server to be removed.
-        """
-        print(f"Removing server {host}:{port} from load balancer")
-        self.SERVER_HOST.pop(index)
-        self.SERVER_PORTS.pop(index)
-        self.connection_counts.pop(index)
+        if len(sys.argv) == 1 or sys.argv[1] == "r":
+            self.LB_algorithm = RoundRobin()
+        elif sys.argv[1] == "c":
+            self.LB_algorithm = RoundRobin()
+        else:
+            print("unknown algorithm type")
+            sys.exit()
         
-    async def check_heartbeat(self, server_writer, server_reader, index, host, port):
+    async def check_heartbeat(self, server_writer, server_reader, host, port):
         """
         Periodically checks the heartbeats of the backend servers.
         If a server is not responding, it will be removed from the load balancer.
@@ -93,17 +81,17 @@ class LoadBalancer:
                     data = await asyncio.wait_for(server_reader.read(self.MAX_DATA_SIZE), timeout=10)
                 except asyncio.TimeoutError:
                     print(f"Timeout waiting for heartbeat from {host}:{port}.")
-                    self.remove_server(index, host, port)
+                    self.LB_algorithm.remove_server(host, port)
                     break
                 if not data:
                     print(f"Server connection {host}:{port} has been closed")
-                    self.remove_server(index, host, port)
+                    self.LB_algorithm.remove_server(host, port)
                     break
                 message = data.decode().strip()
                 print(f"Received heartbeat from {host}:{port}: {message}")
         except Exception as e:
             print(f"Heartbeat error from {host}:{port}: {e}")
-            self.remove_server(index, host, port)
+            self.LB_algorithm.remove_server(host, port)
 
     async def cli_to_srv_forward(self, client_reader, server_writer, client_writer):
         """
@@ -187,15 +175,13 @@ class LoadBalancer:
             client_writer.close()
             await client_writer.wait_closed()
 
-
-    async def handle_connection(self, reader, writer, algorithm_type):
+    async def handle_connection(self, reader, writer):
         """
         Handles incoming client connections and forwards requests to the appropriate backend server.
 
         Args:
             client_reader: StreamReader object that reads data from the client.
             client_writer: StreamWriter object that writes data to the client.
-            algorithm_type: The load balancing algorithm to use.
         """
         addr = writer.get_extra_info('peername')
         print(f"Load balancer received connection on port {addr[1]}")
@@ -213,14 +199,13 @@ class LoadBalancer:
                 if len(parts) == 3:
                     server_host = parts[1]
                     server_port = int(parts[2])
-                    index = len(self.SERVER_PORTS)  # New server index
-                    self.add_server(server_host, server_port)
+                    self.LB_algorithm.add_server(server_host, server_port)
                     
                     writer.write(b"REGISTERED")
                     await writer.drain()
                     print(f"Server registered: {server_host}:{server_port}")
                     
-                    await self.check_heartbeat(writer, reader, index, server_host, server_port)
+                    await self.check_heartbeat(writer, reader, server_host, server_port)
                 else:
                     print("Invalid register message format.")
                     writer.write(b"INVALID REGISTER MESSAGE")
@@ -231,20 +216,19 @@ class LoadBalancer:
             else:
                 # Is a client connection
                 print(f"Load balancer knows that this is a client")
-                await self.handle_client(reader, writer, algorithm_type)
+                await self.handle_client(reader, writer)
         except asyncio.TimeoutError:
             print("Timeout waiting for data from connection.")
             writer.close()
             await writer.wait_closed()
         
-    async def handle_client(self, client_reader, client_writer, algorithm_type):
+    async def handle_client(self, client_reader, client_writer):
         """
         Handles a client connection by forwarding data to the appropriate backend server.
 
         Args:
             client_reader: StreamReader object that reads data from the client.
             client_writer: StreamWriter object that writes data to the client.
-            algorithm_type: The load balancing algorithm to use.
         """
         addr = client_writer.get_extra_info('peername')
         print(f"Load balancer received client on port {addr[1]}")
@@ -254,17 +238,19 @@ class LoadBalancer:
         index = None
            
         try:
-            async with self.lock:
-                if algorithm_type == AlgorithmType.ROUND_ROBIN:
-                    backend_port = self.SERVER_PORTS[self.next_server]
-                    index = self.next_server
-                    self.next_server = (self.next_server + 1) % len(self.SERVER_PORTS) 
-                elif algorithm_type == AlgorithmType.LEAST_CONNECTIONS: 
-                    index = self.connection_counts.index(min(self.connection_counts))
-                    backend_port = self.SERVER_PORTS[index]
-                self.connection_counts[index] += 1
-                
-            server_reader, server_writer = await asyncio.open_connection(self.SERVER_HOST[index], backend_port)
+            # async with self.lock:
+            #     if algorithm_type == AlgorithmType.ROUND_ROBIN:
+            #         backend_port = self.SERVER_PORTS[self.next_server]
+            #         index = self.next_server
+            #         self.next_server = (self.next_server + 1) % len(self.SERVER_PORTS) 
+            #     elif algorithm_type == AlgorithmType.LEAST_CONNECTIONS: 
+            #         index = self.connection_counts.index(min(self.connection_counts))
+            #         backend_port = self.SERVER_PORTS[index]
+            #     self.connection_counts[index] += 1
+            server = self.LB_algorithm.get_server()
+            backend_port = server.port
+            server_host = server.host
+            server_reader, server_writer = await asyncio.open_connection(server_host, backend_port)
             print(f"Load balancer connected to backend server on port {backend_port}")
 
             async with self.lock:
@@ -280,11 +266,9 @@ class LoadBalancer:
             print("Error connecting to backend server:", e)
         finally:
             async with self.lock:
-                if index is not None:
-                    self.connection_counts[index] -= 1
-                self.active_connections -= 1
+                server.connection_count += 1
                 print(f"Load balancer closed connection with client on port {addr[1]}")
-                print(f"Server on port {backend_port} has {self.connection_counts[index]} connections")
+                print(f"Server on port {backend_port} has {server.connection_count} connections")
                 print(f"Total active connections: {self.active_connections}")
             client_writer.close()
             if server_writer:
@@ -298,24 +282,16 @@ class LoadBalancer:
         Args:
             From command line: algorithm_type (r for round robin, c for least connections).
         """
-        if len(sys.argv) < 1 or len(sys.argv) > 2:
-            print("Usage: python load_balancer.py <algorithm_type>")
-            sys.exit()
-        
-        if len(sys.argv) == 1 or sys.argv[1] == "r":
-            algorithm_type = AlgorithmType.ROUND_ROBIN
-        elif sys.argv[1] == "c":
-            algorithm_type = AlgorithmType.LEAST_CONNECTIONS
-        else:
-            print("unknown algorithm type")
-            sys.exit()
 
+        # load the designated load balancing algorithm
+        self.load_lb_algorithm()
+        
         # start server processes
         self.start_servers()
 
         # start the load balancer
         load_balancer = await asyncio.start_server(
-            lambda r, w: self.handle_connection(r, w, algorithm_type),
+            lambda r, w: self.handle_connection(r, w),
             self.LB_HOST,
             self.LB_PORT
         )
