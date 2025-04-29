@@ -18,6 +18,9 @@ async def client_program():
     
     client_reader, client_writer = await asyncio.open_connection(server_ip, port)
 
+    client_writer.write("CLIENT|ADD".encode())
+    await client_writer.drain()
+
     message = input(" -> ")
     while message.strip() != '.': 
         if message.strip() == '':
