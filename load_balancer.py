@@ -5,9 +5,9 @@ import asyncio
 import uuid
 import heapq
 
-from collections import deque
-
-from algorithm_type import RoundRobin, LeastConnections, AlgorithmType
+from lb_algorithms.least_connections import LeastConnections  # Import from the folder
+from lb_algorithms.round_robin import RoundRobin
+from lb_algorithms.algorithm_type import AlgorithmType
 from semantic_cache import SemanticCache
 
         
