@@ -2,11 +2,13 @@ import subprocess
 import sys
 import time
 import asyncio
-from algorithm_type import LBAlgorithm, AlgorithmType, RoundRobin, LeastConnections, BackendServer
-from semantic_cache import SemanticCache
 import uuid
+import heapq
+
 from collections import deque
 
+from algorithm_type import RoundRobin, LeastConnections, AlgorithmType
+from semantic_cache import SemanticCache
 
         
 class LoadBalancer:
@@ -18,6 +20,7 @@ class LoadBalancer:
         self.LB_PORT = 1234
 
         # Load balancing algorithm
+        self.algorithm_type = None
         self.LB_algorithm = self.load_lb_algorithm()
         self.lock = asyncio.Lock()
 
@@ -62,9 +65,13 @@ class LoadBalancer:
             sys.exit()
         
         if len(sys.argv) == 1 or sys.argv[1] == "r":
+            print("Using Round Robin algorithm")
             self.LB_algorithm = RoundRobin()
+            self.algorithm_type = AlgorithmType.ROUND_ROBIN
         elif sys.argv[1] == "c":
-            self.LB_algorithm = RoundRobin()
+            print("Using Least Connections algorithm")
+            self.LB_algorithm = LeastConnections()
+            self.algorithm_type = AlgorithmType.LEAST_CONNECTIONS
         else:
             print("unknown algorithm type")
             sys.exit()
@@ -238,15 +245,6 @@ class LoadBalancer:
         index = None
            
         try:
-            # async with self.lock:
-            #     if algorithm_type == AlgorithmType.ROUND_ROBIN:
-            #         backend_port = self.SERVER_PORTS[self.next_server]
-            #         index = self.next_server
-            #         self.next_server = (self.next_server + 1) % len(self.SERVER_PORTS) 
-            #     elif algorithm_type == AlgorithmType.LEAST_CONNECTIONS: 
-            #         index = self.connection_counts.index(min(self.connection_counts))
-            #         backend_port = self.SERVER_PORTS[index]
-            #     self.connection_counts[index] += 1
             server = self.LB_algorithm.get_server()
             backend_port = server.port
             server_host = server.host
@@ -266,7 +264,10 @@ class LoadBalancer:
             print("Error connecting to backend server:", e)
         finally:
             async with self.lock:
-                server.connection_count += 1
+                server.connection_count -= 1
+                if self.algorithm_type == AlgorithmType.LEAST_CONNECTIONS:
+                    heapq.heapify(self.LB_algorithm.servers)
+                self.active_connections -= 1
                 print(f"Load balancer closed connection with client on port {addr[1]}")
                 print(f"Server on port {backend_port} has {server.connection_count} connections")
                 print(f"Total active connections: {self.active_connections}")
