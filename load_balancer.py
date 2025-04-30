@@ -10,7 +10,6 @@ from lb_algorithms.round_robin import RoundRobin
 from lb_algorithms.algorithm_type import AlgorithmType
 from semantic_cache import SemanticCache
 
-        
 class LoadBalancer:
     """
     LoadBalancer class that manages the backend servers and distributes requests to them.
@@ -292,7 +291,7 @@ class LoadBalancer:
 
         # start the load balancer
         load_balancer = await asyncio.start_server(
-            lambda r, w: self.handle_connection(r, w),
+            self.handle_connection,
             self.LB_HOST,
             self.LB_PORT
         )
