@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Load Balancer Web Client</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-blue-50 min-h-screen flex items-center justify-center px-4">
+  <div class="w-full max-w-xl bg-white p-6 rounded-2xl shadow-xl border border-blue-100 flex flex-col space-y-4">
+    
+    <h1 class="text-2xl font-bold text-blue-800 text-center">
+      Load Balancer Web Client
+    </h1>
+
+    <!-- Chat Log -->
+    <div id="log" class="flex flex-col space-y-2 overflow-y-auto h-[48rem] p-3 bg-gray-100 rounded-lg border border-blue-200">
+      <!-- Messages go here -->
+    </div>
+
+    <!-- Input Area -->
+    <form id="chatForm" class="flex gap-2" onsubmit="sendMessage(event)">
+      <input id="msgInput" type="text" placeholder="Once upon a time..." 
+             class="flex-1 px-4 py-2 rounded-lg border border-blue-300 focus:outline-none focus:ring-2 focus:ring-blue-400 bg-blue-50 text-blue-900 placeholder-blue-400" />
+      <button type="submit"
+              class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition">
+        Send
+      </button>
+    </form>
+
+  </div>
+  
+  <script src="/static/main.js"></script>
+</body>
+
+</html>

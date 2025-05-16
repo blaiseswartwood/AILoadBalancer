@@ -15,7 +15,7 @@ class LoadBalancer:
     LoadBalancer class that manages the backend servers and distributes requests to them.
     """
     def __init__(self):
-        self.LB_HOST = 'localhost' 
+        self.LB_HOST = 'localhost'  
         self.LB_PORT = 1234
 
         # Load balancing algorithm
