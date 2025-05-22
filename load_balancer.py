@@ -19,8 +19,7 @@ class LoadBalancer:
         self.LB_PORT = 1234
 
         # Load balancing algorithm
-        self.algorithm_type = None
-        self.LB_algorithm = self.load_lb_algorithm()
+        self.load_lb_algorithm()
         self.lock = asyncio.Lock()
 
         self.MAX_DATA_SIZE = 1024
@@ -39,7 +38,6 @@ class LoadBalancer:
         """
         Starts the servers on the specified ports
         """
-        # ports = [1235, 1236]  
         ports = []
         for port in ports:
             print("Starting server on port:", port)
@@ -59,15 +57,15 @@ class LoadBalancer:
         """
         Loads the load balancing algorithm based on the command line argument.
         """
-        if len(sys.argv) < 1 or len(sys.argv) > 2:
+        if len(sys.argv) != 2:
             print("Usage: python load_balancer.py <algorithm_type>")
             sys.exit()
         
-        if len(sys.argv) == 1 or sys.argv[1] == "r":
+        if sys.argv[1] == "-r":
             print("Using Round Robin algorithm")
             self.LB_algorithm = RoundRobin()
             self.algorithm_type = AlgorithmType.ROUND_ROBIN
-        elif sys.argv[1] == "c":
+        elif sys.argv[1] == "-c":
             print("Using Least Connections algorithm")
             self.LB_algorithm = LeastConnections()
             self.algorithm_type = AlgorithmType.LEAST_CONNECTIONS
